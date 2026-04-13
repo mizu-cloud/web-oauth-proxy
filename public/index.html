@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>OIDC Proxy Admin</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Host-Based OIDC Proxy</p>
+          <h1>Manage protected sites with one focused control room.</h1>
+          <p class="subtitle">
+            Register site hosts, upstream URLs, and per-host OIDC settings without editing files.
+          </p>
+        </div>
+        <div class="hero-card">
+          <p class="card-label">Authenticated admin</p>
+          <h2 id="adminName">Loading...</h2>
+          <form method="post" action="/_admin/auth/logout">
+            <button type="submit" class="ghost">Sign out</button>
+          </form>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel form-panel">
+          <div class="panel-heading">
+            <p class="eyebrow">Site editor</p>
+            <h2 id="formTitle">Create new host</h2>
+          </div>
+
+          <form id="siteForm">
+            <input type="hidden" id="siteId">
+            <label>
+              <span>Display name</span>
+              <input id="displayName" required>
+            </label>
+            <label>
+              <span>Host</span>
+              <input id="host" placeholder="app.example.com" required>
+            </label>
+            <label>
+              <span>Upstream URL</span>
+              <input id="upstreamUrl" type="url" placeholder="http://internal-app:8080" required>
+            </label>
+            <label>
+              <span>OIDC issuer</span>
+              <input id="issuer" type="url" placeholder="https://idp.example.com/realms/main" required>
+            </label>
+            <label>
+              <span>Client ID</span>
+              <input id="clientId" required>
+            </label>
+            <label>
+              <span>Client secret</span>
+              <input id="clientSecret" type="password" required>
+            </label>
+            <label>
+              <span>Scopes</span>
+              <input id="scopes" value="openid profile email" required>
+            </label>
+            <label>
+              <span>Redirect path</span>
+              <input id="redirectPath" value="/_auth/callback" required>
+            </label>
+            <label>
+              <span>Post logout redirect URL</span>
+              <input id="postLogoutRedirectUrl" type="url" placeholder="https://app.example.com/">
+            </label>
+            <label class="checkbox">
+              <input id="enabled" type="checkbox" checked>
+              <span>Enabled</span>
+            </label>
+
+            <div class="actions">
+              <button type="submit">Save site</button>
+              <button type="button" id="resetButton" class="ghost">Clear</button>
+            </div>
+            <p id="flash" class="flash" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <section class="panel list-panel">
+          <div class="panel-heading">
+            <p class="eyebrow">Configured sites</p>
+            <h2>Hosts</h2>
+          </div>
+          <div id="siteList" class="site-list"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
