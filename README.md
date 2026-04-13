@@ -33,6 +33,28 @@ npm install
 npm start
 ```
 
+`.env` がある場合は、起動時に自動で読み込みます。
+
+```bash
+ADMIN_HOST=admin.example.com
+ADMIN_SESSION_SECRET=replace-me
+APP_ENCRYPTION_KEY=replace-me-too
+ADMIN_OIDC_ISSUER=https://idp.example.com/realms/main
+ADMIN_OIDC_CLIENT_ID=admin-client
+ADMIN_OIDC_CLIENT_SECRET=super-secret
+```
+
+## PM2
+
+```bash
+npm run start:pm2
+npm run restart:pm2
+npm run stop:pm2
+```
+
+必要な OIDC 用環境変数は `.env` またはシェルで設定してから `pm2 start ecosystem.config.js` を実行してください。  
+固定値を使いたい場合は `ecosystem.config.js` の `env` を更新します。
+
 ## Routes
 
 - `https://<admin-host>/`: 管理画面
