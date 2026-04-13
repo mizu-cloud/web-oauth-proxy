@@ -239,7 +239,7 @@ function createApp(options = {}) {
   const siteRouter = express.Router();
   siteRouter.use(applyDynamicSession("site_session", (req) => resolveHost(req)));
 
-  siteRouter.get("/_auth/login", async (req, res) => {
+  async function handleSiteLogin(req, res) {
     const host = resolveHost(req);
     const site = repository.getSiteByHost(host);
     if (!site || !site.enabled) {
@@ -265,9 +265,9 @@ function createApp(options = {}) {
     } catch (error) {
       res.status(500).type("text/html").send(renderErrorPage("OIDC login failed", sanitizeError(error)));
     }
-  });
+  }
 
-  siteRouter.get("/_auth/callback", async (req, res) => {
+  async function handleSiteCallback(req, res) {
     const host = resolveHost(req);
     const site = repository.getSiteByHost(host);
     if (!site || !site.enabled) {
@@ -299,6 +299,17 @@ function createApp(options = {}) {
         .type("text/html")
         .send(renderErrorPage("OIDC callback failed", sanitizeError(error)));
     }
+  }
+
+  siteRouter.get("/_auth/login", handleSiteLogin);
+  siteRouter.get("/_auth/callback", handleSiteCallback);
+  siteRouter.get("*", (req, res, next) => {
+    const site = repository.getSiteByHost(resolveHost(req));
+    if (site && req.path === site.oidc.redirectPath && site.oidc.redirectPath !== "/_auth/callback") {
+      return handleSiteCallback(req, res);
+    }
+
+    return next();
   });
 
   siteRouter.post("/_auth/logout", (req, res) => {

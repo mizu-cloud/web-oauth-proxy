@@ -151,3 +151,56 @@ test("site host redirects unauthenticated users into OIDC flow", async () => {
   const response = await supertest(app).get("/reports").set("Host", "app.example.com").expect(302);
   assert.match(response.headers.location, /^\/_auth\/login\?/);
 });
+
+test("custom site redirect path completes callback without redirect loop", async () => {
+  const repository = createRepositoryStub();
+  repository.getSiteByHost = () => ({
+    id: 1,
+    host: "app.example.com",
+    displayName: "App",
+    upstreamUrl: "http://127.0.0.1:9",
+    enabled: true,
+    oidc: {
+      issuer: "https://issuer.example.com",
+      clientId: "client",
+      clientSecret: "secret",
+      scopes: "openid profile email",
+      redirectPath: "/oidc/custom-callback",
+      postLogoutRedirectUrl: ""
+    }
+  });
+
+  const { app } = createApp({
+    config: {
+      port: 0,
+      trustProxy: false,
+      databasePath: ":memory:",
+      adminHost: "admin.example.com",
+      adminSessionSecret: "secret",
+      appEncryptionKey: "enc",
+      adminOidc: {
+        issuer: "https://issuer.example.com",
+        clientId: "admin",
+        clientSecret: "secret",
+        scopes: "openid profile email",
+        redirectPath: "/_admin/auth/callback",
+        postLogoutRedirectUrl: ""
+      }
+    },
+    repository,
+    oidcService: createOidcStub()
+  });
+
+  const agent = supertest.agent(app);
+  await agent
+    .get("/_auth/login?returnTo=%2Freports")
+    .set("Host", "app.example.com")
+    .expect(302);
+
+  const callbackResponse = await agent
+    .get("/oidc/custom-callback?code=abc&state=state-123")
+    .set("Host", "app.example.com")
+    .expect(302);
+
+  assert.equal(callbackResponse.headers.location, "/reports");
+});
