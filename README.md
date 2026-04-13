@@ -10,6 +10,7 @@
 - SQLite による設定永続化
 - ホスト単位で独立したセッション Cookie
 - OIDC discovery による設定検証
+- ID token の署名アルゴリズムは `HS256` 前提
 
 ## Environment Variables
 
@@ -72,3 +73,4 @@ npm run stop:pm2
 - TLS 終端は前段プロキシを前提にしています。
 - 管理用 OIDC 設定は環境変数ブートストラップのみです。
 - セッションはサーバメモリ保持です。設定は SQLite に永続化されます。
+- OIDC クライアントは `HS256` の ID token を前提にしています。

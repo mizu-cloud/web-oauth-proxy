@@ -27,6 +27,7 @@ class OidcService {
     return new issuer.Client({
       client_id: config.clientId,
       client_secret: config.clientSecret,
+      id_token_signed_response_alg: "HS256",
       redirect_uris: [redirectUri],
       response_types: ["code"]
     });
