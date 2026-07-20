@@ -23,8 +23,7 @@ function createApp(options = {}) {
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
-  const MemoryStore = session.MemoryStore;
-  const sharedStore = new MemoryStore();
+  const sharedStore = options.sessionStore || new session.MemoryStore();
   const sessionMiddlewareCache = new Map();
   const proxyMiddlewareCache = new Map();
 
