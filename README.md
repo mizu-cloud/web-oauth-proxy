@@ -7,7 +7,7 @@
 
 - ホスト名ごとの upstream URL と OIDC 設定
 - 管理画面も OIDC で保護
-- SQLite による設定永続化
+- MySQL による設定永続化
 - ホスト単位で独立したセッション Cookie
 - OIDC discovery による設定検証
 - ID token の署名アルゴリズムは `HS256` 前提
@@ -16,7 +16,8 @@
 
 - `PORT`: リッスンポート。既定値は `3000`
 - `TRUST_PROXY`: `true` のとき `X-Forwarded-*` を信頼
-- `DATABASE_URL`: SQLite ファイルパス。既定値は `./data/web-oauth-proxy.db`
+- `DATABASE_URL`: MySQL 接続 URL。例: `mysql://user:pass@127.0.0.1:3306/web_oauth_proxy`
+  - 未設定の場合は `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` から組み立てます(既定値は `mysql://root@127.0.0.1:3306/web_oauth_proxy`)
 - `ADMIN_HOST`: 管理画面用ホスト名
 - `ADMIN_SESSION_SECRET`: セッション署名キー
 - `APP_ENCRYPTION_KEY`: DB 内の秘密値暗号化キー。32 バイト以上推奨
@@ -29,9 +30,17 @@
 
 ## Start
 
+MySQL(8 系)にアクセスできる状態で起動します。テーブルは起動時に自動作成されます。
+
 ```bash
 npm install
 npm start
+```
+
+Docker Compose を使うと MySQL 込みで起動できます。
+
+```bash
+docker compose up -d
 ```
 
 `.env` がある場合は、起動時に自動で読み込みます。
@@ -72,5 +81,5 @@ npm run stop:pm2
 
 - TLS 終端は前段プロキシを前提にしています。
 - 管理用 OIDC 設定は環境変数ブートストラップのみです。
-- セッションはサーバメモリ保持です。設定は SQLite に永続化されます。
+- セッションはサーバメモリ保持です。設定は MySQL に永続化されます。
 - OIDC クライアントは `HS256` の ID token を前提にしています。

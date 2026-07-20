@@ -13,7 +13,7 @@ module.exports = {
         NODE_ENV: "production",
         PORT: 3000,
         TRUST_PROXY: "true",
-        DATABASE_URL: "./data/web-oauth-proxy.db"
+        DATABASE_URL: "mysql://root@127.0.0.1:3306/web_oauth_proxy"
       }
     }
   ]

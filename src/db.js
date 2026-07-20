@@ -1,120 +1,35 @@
-const fs = require("fs");
-const path = require("path");
-const Database = require("better-sqlite3");
+const mysql = require("mysql2/promise");
 const { encryptSecret, decryptSecret } = require("./crypto");
 const { normalizeHost } = require("./config");
 
-function createDatabase(databasePath, encryptionSecret) {
-  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-  const db = new Database(databasePath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  migrate(db);
+const SITE_SELECT = `
+  SELECT
+    s.id,
+    s.host,
+    s.display_name,
+    s.upstream_url,
+    s.enabled,
+    s.created_at,
+    s.updated_at,
+    o.issuer,
+    o.client_id,
+    o.client_secret,
+    o.scopes,
+    o.redirect_path,
+    o.post_logout_redirect_url
+  FROM sites s
+  JOIN oidc_configs o ON o.site_id = s.id
+`;
 
-  const statements = {
-    listSites: db.prepare(`
-      SELECT
-        s.id,
-        s.host,
-        s.display_name,
-        s.upstream_url,
-        s.enabled,
-        s.created_at,
-        s.updated_at,
-        o.issuer,
-        o.client_id,
-        o.client_secret,
-        o.scopes,
-        o.redirect_path,
-        o.post_logout_redirect_url
-      FROM sites s
-      JOIN oidc_configs o ON o.site_id = s.id
-      ORDER BY s.host ASC
-    `),
-    getSiteById: db.prepare(`
-      SELECT
-        s.id,
-        s.host,
-        s.display_name,
-        s.upstream_url,
-        s.enabled,
-        s.created_at,
-        s.updated_at,
-        o.issuer,
-        o.client_id,
-        o.client_secret,
-        o.scopes,
-        o.redirect_path,
-        o.post_logout_redirect_url
-      FROM sites s
-      JOIN oidc_configs o ON o.site_id = s.id
-      WHERE s.id = ?
-    `),
-    getSiteByHost: db.prepare(`
-      SELECT
-        s.id,
-        s.host,
-        s.display_name,
-        s.upstream_url,
-        s.enabled,
-        s.created_at,
-        s.updated_at,
-        o.issuer,
-        o.client_id,
-        o.client_secret,
-        o.scopes,
-        o.redirect_path,
-        o.post_logout_redirect_url
-      FROM sites s
-      JOIN oidc_configs o ON o.site_id = s.id
-      WHERE s.host = ?
-    `),
-    insertSite: db.prepare(`
-      INSERT INTO sites (host, display_name, upstream_url, enabled)
-      VALUES (@host, @displayName, @upstreamUrl, @enabled)
-    `),
-    insertOidc: db.prepare(`
-      INSERT INTO oidc_configs (
-        site_id,
-        issuer,
-        client_id,
-        client_secret,
-        scopes,
-        redirect_path,
-        post_logout_redirect_url
-      )
-      VALUES (
-        @siteId,
-        @issuer,
-        @clientId,
-        @clientSecret,
-        @scopes,
-        @redirectPath,
-        @postLogoutRedirectUrl
-      )
-    `),
-    updateSite: db.prepare(`
-      UPDATE sites
-      SET host = @host,
-          display_name = @displayName,
-          upstream_url = @upstreamUrl,
-          enabled = @enabled,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = @id
-    `),
-    updateOidc: db.prepare(`
-      UPDATE oidc_configs
-      SET issuer = @issuer,
-          client_id = @clientId,
-          client_secret = @clientSecret,
-          scopes = @scopes,
-          redirect_path = @redirectPath,
-          post_logout_redirect_url = @postLogoutRedirectUrl,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE site_id = @siteId
-    `),
-    deleteSite: db.prepare(`DELETE FROM sites WHERE id = ?`)
-  };
+async function createDatabase(databaseUrl, encryptionSecret) {
+  const pool = mysql.createPool({
+    uri: databaseUrl,
+    waitForConnections: true,
+    connectionLimit: 10,
+    dateStrings: true
+  });
+
+  await migrate(pool);
 
   function hydrate(row) {
     if (!row) {
@@ -140,94 +55,125 @@ function createDatabase(databasePath, encryptionSecret) {
     };
   }
 
-  const createSite = db.transaction((input) => {
-    const siteResult = statements.insertSite.run({
-      host: normalizeHost(input.host),
-      displayName: input.displayName,
-      upstreamUrl: input.upstreamUrl,
-      enabled: input.enabled ? 1 : 0
-    });
+  async function getSiteById(id) {
+    const [rows] = await pool.query(`${SITE_SELECT} WHERE s.id = ?`, [id]);
+    return hydrate(rows[0]);
+  }
 
-    statements.insertOidc.run({
-      siteId: siteResult.lastInsertRowid,
-      issuer: input.oidc.issuer,
-      clientId: input.oidc.clientId,
-      clientSecret: encryptSecret(input.oidc.clientSecret, encryptionSecret),
-      scopes: input.oidc.scopes,
-      redirectPath: input.oidc.redirectPath,
-      postLogoutRedirectUrl: input.oidc.postLogoutRedirectUrl || ""
-    });
-
-    return getSiteById(Number(siteResult.lastInsertRowid));
-  });
-
-  const updateSite = db.transaction((id, input) => {
-    statements.updateSite.run({
-      id,
-      host: normalizeHost(input.host),
-      displayName: input.displayName,
-      upstreamUrl: input.upstreamUrl,
-      enabled: input.enabled ? 1 : 0
-    });
-
-    statements.updateOidc.run({
-      siteId: id,
-      issuer: input.oidc.issuer,
-      clientId: input.oidc.clientId,
-      clientSecret: encryptSecret(input.oidc.clientSecret, encryptionSecret),
-      scopes: input.oidc.scopes,
-      redirectPath: input.oidc.redirectPath,
-      postLogoutRedirectUrl: input.oidc.postLogoutRedirectUrl || ""
-    });
-
-    return getSiteById(id);
-  });
-
-  function getSiteById(id) {
-    return hydrate(statements.getSiteById.get(id));
+  async function withTransaction(work) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const result = await work(connection);
+      await connection.commit();
+      return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   return {
-    db,
-    listSites() {
-      return statements.listSites.all().map(hydrate);
+    pool,
+    async listSites() {
+      const [rows] = await pool.query(`${SITE_SELECT} ORDER BY s.host ASC`);
+      return rows.map(hydrate);
     },
     getSiteById,
-    getSiteByHost(host) {
-      return hydrate(statements.getSiteByHost.get(normalizeHost(host)));
+    async getSiteByHost(host) {
+      const [rows] = await pool.query(`${SITE_SELECT} WHERE s.host = ?`, [normalizeHost(host)]);
+      return hydrate(rows[0]);
     },
-    createSite,
-    updateSite,
-    deleteSite(id) {
-      statements.deleteSite.run(id);
+    async createSite(input) {
+      const siteId = await withTransaction(async (connection) => {
+        const [siteResult] = await connection.query(
+          `INSERT INTO sites (host, display_name, upstream_url, enabled) VALUES (?, ?, ?, ?)`,
+          [normalizeHost(input.host), input.displayName, input.upstreamUrl, input.enabled ? 1 : 0]
+        );
+
+        await connection.query(
+          `INSERT INTO oidc_configs (
+            site_id, issuer, client_id, client_secret, scopes, redirect_path, post_logout_redirect_url
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            siteResult.insertId,
+            input.oidc.issuer,
+            input.oidc.clientId,
+            encryptSecret(input.oidc.clientSecret, encryptionSecret),
+            input.oidc.scopes,
+            input.oidc.redirectPath,
+            input.oidc.postLogoutRedirectUrl || ""
+          ]
+        );
+
+        return siteResult.insertId;
+      });
+
+      return getSiteById(siteId);
+    },
+    async updateSite(id, input) {
+      await withTransaction(async (connection) => {
+        await connection.query(
+          `UPDATE sites SET host = ?, display_name = ?, upstream_url = ?, enabled = ? WHERE id = ?`,
+          [normalizeHost(input.host), input.displayName, input.upstreamUrl, input.enabled ? 1 : 0, id]
+        );
+
+        await connection.query(
+          `UPDATE oidc_configs
+           SET issuer = ?, client_id = ?, client_secret = ?, scopes = ?, redirect_path = ?, post_logout_redirect_url = ?
+           WHERE site_id = ?`,
+          [
+            input.oidc.issuer,
+            input.oidc.clientId,
+            encryptSecret(input.oidc.clientSecret, encryptionSecret),
+            input.oidc.scopes,
+            input.oidc.redirectPath,
+            input.oidc.postLogoutRedirectUrl || "",
+            id
+          ]
+        );
+      });
+
+      return getSiteById(id);
+    },
+    async deleteSite(id) {
+      await pool.query(`DELETE FROM sites WHERE id = ?`, [id]);
+    },
+    async close() {
+      await pool.end();
     }
   };
 }
 
-function migrate(db) {
-  db.exec(`
+async function migrate(pool) {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS sites (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      host TEXT NOT NULL UNIQUE,
-      display_name TEXT NOT NULL,
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      host VARCHAR(255) NOT NULL UNIQUE,
+      display_name VARCHAR(255) NOT NULL,
       upstream_url TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+  `);
 
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS oidc_configs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      site_id INTEGER NOT NULL UNIQUE REFERENCES sites(id) ON DELETE CASCADE,
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      site_id INT UNSIGNED NOT NULL UNIQUE,
       issuer TEXT NOT NULL,
       client_id TEXT NOT NULL,
       client_secret TEXT NOT NULL,
       scopes TEXT NOT NULL,
-      redirect_path TEXT NOT NULL DEFAULT '/_auth/callback',
+      redirect_path VARCHAR(255) NOT NULL DEFAULT '/_auth/callback',
       post_logout_redirect_url TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_oidc_configs_site FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
   `);
 }
 

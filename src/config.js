@@ -1,5 +1,3 @@
-const path = require("path");
-
 function toBoolean(value, fallback = false) {
   if (value == null) {
     return fallback;
@@ -8,25 +6,25 @@ function toBoolean(value, fallback = false) {
   return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
 }
 
-function resolveDatabasePath(databaseUrl) {
-  if (!databaseUrl) {
-    return path.join(process.cwd(), "data", "web-oauth-proxy.db");
+function resolveDatabaseUrl(env) {
+  if (env.DATABASE_URL) {
+    return env.DATABASE_URL;
   }
 
-  if (databaseUrl.startsWith("file:")) {
-    return new URL(databaseUrl).pathname;
-  }
+  const user = encodeURIComponent(env.MYSQL_USER || "root");
+  const password = env.MYSQL_PASSWORD ? `:${encodeURIComponent(env.MYSQL_PASSWORD)}` : "";
+  const host = env.MYSQL_HOST || "127.0.0.1";
+  const port = env.MYSQL_PORT || "3306";
+  const database = env.MYSQL_DATABASE || "web_oauth_proxy";
 
-  return path.isAbsolute(databaseUrl)
-    ? databaseUrl
-    : path.join(process.cwd(), databaseUrl);
+  return `mysql://${user}${password}@${host}:${port}/${database}`;
 }
 
 function getConfig(env = process.env) {
   return {
     port: Number(env.PORT || 3000),
     trustProxy: toBoolean(env.TRUST_PROXY, true),
-    databasePath: resolveDatabasePath(env.DATABASE_URL),
+    databaseUrl: resolveDatabaseUrl(env),
     adminHost: normalizeHost(env.ADMIN_HOST || "admin.example.com"),
     adminSessionSecret: env.ADMIN_SESSION_SECRET || "change-me-admin-session-secret",
     appEncryptionKey: env.APP_ENCRYPTION_KEY || env.ADMIN_SESSION_SECRET || "change-me-app-encryption-key",

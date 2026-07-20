@@ -3,15 +3,16 @@ const express = require("express");
 const session = require("express-session");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const { getConfig, normalizeHost } = require("./config");
-const { createDatabase } = require("./db");
 const { hostCookieName } = require("./crypto");
 const { OidcService } = require("./oidc");
 const { validateSiteInput } = require("./validation");
 
 function createApp(options = {}) {
   const config = options.config || getConfig();
-  const repository =
-    options.repository || createDatabase(config.databasePath, config.appEncryptionKey);
+  const repository = options.repository;
+  if (!repository) {
+    throw new Error("repository is required. Create one with createDatabase() from ./db.");
+  }
   const oidcService = options.oidcService || new OidcService();
   const app = express();
 
@@ -169,17 +170,20 @@ function createApp(options = {}) {
     res.json({ user: req.session.adminUser });
   });
 
-  adminRouter.get("/api/sites", (req, res) => {
-    res.json({
-      sites: repository.listSites().map(toPublicSite)
-    });
+  adminRouter.get("/api/sites", async (req, res, next) => {
+    try {
+      const sites = await repository.listSites();
+      res.json({ sites: sites.map(toPublicSite) });
+    } catch (error) {
+      next(error);
+    }
   });
 
   adminRouter.post("/api/sites", async (req, res) => {
     try {
       const input = validateSiteInput(req.body);
       await oidcService.validateConfiguration(input.oidc);
-      const site = repository.createSite(input);
+      const site = await repository.createSite(input);
       res.status(201).json({ site: toPublicSite(site) });
     } catch (error) {
       res.status(400).json({ error: sanitizeError(error) });
@@ -188,7 +192,7 @@ function createApp(options = {}) {
 
   adminRouter.put("/api/sites/:id", async (req, res) => {
     try {
-      const existing = repository.getSiteById(Number(req.params.id));
+      const existing = await repository.getSiteById(Number(req.params.id));
       if (!existing) {
         return res.status(404).json({ error: "Site not found." });
       }
@@ -201,34 +205,42 @@ function createApp(options = {}) {
         input.oidc.clientSecret = existing.oidc.clientSecret;
       }
       await oidcService.validateConfiguration(input.oidc);
-      const site = repository.updateSite(existing.id, input);
+      const site = await repository.updateSite(existing.id, input);
       return res.json({ site: toPublicSite(site) });
     } catch (error) {
       return res.status(400).json({ error: sanitizeError(error) });
     }
   });
 
-  adminRouter.delete("/api/sites/:id", (req, res) => {
-    const existing = repository.getSiteById(Number(req.params.id));
-    if (!existing) {
-      return res.status(404).json({ error: "Site not found." });
-    }
+  adminRouter.delete("/api/sites/:id", async (req, res, next) => {
+    try {
+      const existing = await repository.getSiteById(Number(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Site not found." });
+      }
 
-    repository.deleteSite(existing.id);
-    res.status(204).end();
+      await repository.deleteSite(existing.id);
+      return res.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
   });
 
-  adminRouter.post("/api/sites/:id/toggle", (req, res) => {
-    const existing = repository.getSiteById(Number(req.params.id));
-    if (!existing) {
-      return res.status(404).json({ error: "Site not found." });
-    }
+  adminRouter.post("/api/sites/:id/toggle", async (req, res, next) => {
+    try {
+      const existing = await repository.getSiteById(Number(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Site not found." });
+      }
 
-    const site = repository.updateSite(existing.id, {
-      ...existing,
-      enabled: !existing.enabled
-    });
-    res.json({ site: toPublicSite(site) });
+      const site = await repository.updateSite(existing.id, {
+        ...existing,
+        enabled: !existing.enabled
+      });
+      return res.json({ site: toPublicSite(site) });
+    } catch (error) {
+      return next(error);
+    }
   });
 
   adminRouter.use(express.static(path.join(process.cwd(), "public")));
@@ -241,7 +253,7 @@ function createApp(options = {}) {
 
   async function handleSiteLogin(req, res) {
     const host = resolveHost(req);
-    const site = repository.getSiteByHost(host);
+    const site = await repository.getSiteByHost(host);
     if (!site || !site.enabled) {
       return res
         .status(404)
@@ -269,7 +281,7 @@ function createApp(options = {}) {
 
   async function handleSiteCallback(req, res) {
     const host = resolveHost(req);
-    const site = repository.getSiteByHost(host);
+    const site = await repository.getSiteByHost(host);
     if (!site || !site.enabled) {
       return res
         .status(404)
@@ -303,27 +315,40 @@ function createApp(options = {}) {
 
   siteRouter.get("/_auth/login", handleSiteLogin);
   siteRouter.get("/_auth/callback", handleSiteCallback);
-  siteRouter.get("*", (req, res, next) => {
-    const site = repository.getSiteByHost(resolveHost(req));
-    if (site && req.path === site.oidc.redirectPath && site.oidc.redirectPath !== "/_auth/callback") {
-      return handleSiteCallback(req, res);
-    }
+  siteRouter.get("*", async (req, res, next) => {
+    try {
+      const site = await repository.getSiteByHost(resolveHost(req));
+      if (site && req.path === site.oidc.redirectPath && site.oidc.redirectPath !== "/_auth/callback") {
+        return handleSiteCallback(req, res);
+      }
 
-    return next();
+      return next();
+    } catch (error) {
+      return next(error);
+    }
   });
 
-  siteRouter.post("/_auth/logout", (req, res) => {
-    const host = resolveHost(req);
-    const site = repository.getSiteByHost(host);
-    const redirectTarget = site?.oidc.postLogoutRedirectUrl || "/";
-    req.session.destroy(() => {
-      res.redirect(redirectTarget);
-    });
+  siteRouter.post("/_auth/logout", async (req, res, next) => {
+    try {
+      const host = resolveHost(req);
+      const site = await repository.getSiteByHost(host);
+      const redirectTarget = site?.oidc.postLogoutRedirectUrl || "/";
+      req.session.destroy(() => {
+        res.redirect(redirectTarget);
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   siteRouter.use(async (req, res, next) => {
     const host = resolveHost(req);
-    const site = repository.getSiteByHost(host);
+    let site;
+    try {
+      site = await repository.getSiteByHost(host);
+    } catch (error) {
+      return next(error);
+    }
 
     if (!site) {
       return res

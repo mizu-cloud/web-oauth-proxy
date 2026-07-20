@@ -1,0 +1,15 @@
+node_modules
+src/node_modules
+src/data
+src/coverage
+src/.env
+.env
+data
+.git
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
+test
+ecosystem.config.js
